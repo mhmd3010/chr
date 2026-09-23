@@ -23,7 +23,6 @@ if [ "$OPTION" = "2" ]; then
     systemctl daemon-reload
     rm -rf /opt/chr
     rm -f /etc/qemu-ifup
-    qemu-nbd --disconnect=/dev/nbd0 2>/dev/null || true
     
     # Remove firewall rules
     iptables -t nat -D POSTROUTING -s 100.64.0.0/24 -j MASQUERADE 2>/dev/null || true
@@ -59,35 +58,6 @@ if [ -f "chr.qcow2" ]; then
 else
     echo "Error: chr.qcow2 not found! Make sure you are inside the extracted installer folder."
     exit 1
-fi
-
-# Pre-configure network via autorun.scr
-echo "Configuring initial network settings in CHR image..."
-modprobe nbd max_part=8 2>/dev/null || true
-if qemu-nbd --connect=/dev/nbd0 /opt/chr/chr.qcow2 2>/dev/null; then
-    sleep 2
-    MNT_DIR=$(mktemp -d)
-    TARGET_DEV=""
-    if [ -b "/dev/nbd0p2" ]; then
-        TARGET_DEV="/dev/nbd0p2"
-    elif [ -b "/dev/nbd0p1" ]; then
-        TARGET_DEV="/dev/nbd0p1"
-    fi
-
-    if [ -n "$TARGET_DEV" ] && mount "$TARGET_DEV" "$MNT_DIR" 2>/dev/null; then
-        mkdir -p "$MNT_DIR/rw"
-        cat << 'AUTORUN_EOF' > "$MNT_DIR/rw/autorun.scr"
-/ip address add address=100.64.0.2/24 interface=ether1
-/interface ethernet set ether1 arp=proxy-arp
-/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1
-AUTORUN_EOF
-        umount "$MNT_DIR" 2>/dev/null || true
-        echo "Initial IP configuration injected."
-    else
-        echo "Notice: Could not mount partition; manual setup may be needed."
-    fi
-    rm -rf "$MNT_DIR"
-    qemu-nbd --disconnect=/dev/nbd0 >/dev/null 2>&1 || true
 fi
 
 # 3. Enable IP Forwarding

@@ -31,18 +31,14 @@ Choose:
 
 ## Setup
 
-The installer automatically pre-configures base IP settings (`100.64.0.2`) on first boot. Once installed, connect directly via **Winbox** (`port 7001`) or **WebFig** (`port 7002`) using user `admin` and a blank password.
-
-### Manual Console Fallback
-
-If auto-configuration could not run, access the console manually:
+The CHR starts with a blank configuration. Open the console once:
 
 ```bash
 systemctl stop mikrotik-chr.service
 eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)
 ```
 
-Configure base network:
+Login as `admin` with a blank password, then run:
 
 ```routeros
 /ip address add address=100.64.0.2/24 interface=ether1
@@ -50,11 +46,13 @@ Configure base network:
 /ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1
 ```
 
-Exit console with `Ctrl + A` then `X`, and start the background service:
+Exit the console with `Ctrl + A` then `X`, and start the background service:
 
 ```bash
 systemctl start mikrotik-chr.service
 ```
+
+CHR is now running in the background.
 
 ## Ports
 
