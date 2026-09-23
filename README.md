@@ -1,10 +1,10 @@
 # MikroTik CHR Installer
 
-[![Free Palestine](https://img.shields.io/badge/FREE-PALESTINE-007A3D?style=flat-square)](#)
-
-[![Platform](https://img.shields.io/badge/platform-Debian-A81D33?style=flat-square)](#)
-[![MikroTik](https://img.shields.io/badge/MikroTik-CHR-293239?style=flat-square)](#)
-[![QEMU](https://img.shields.io/badge/QEMU-supported-FF6600?style=flat-square)](#)
+[![StandWithPalestine](https://raw.githubusercontent.com/Safouene1/support-palestine-banner/master/StandWithPalestine.svg)](https://github.com/Safouene1/support-palestine-banner/blob/master/Markdown-pages/Support.md)
+[![Platform](https://img.shields.io/badge/platform-Debian-A81D33?style=flat-square&logo=debian&logoColor=white)](#)
+[![QEMU](https://img.shields.io/badge/QEMU-supported-FF6600?style=flat-square&logo=qemu&logoColor=white)](#)
+[![MikroTik](https://img.shields.io/badge/MikroTik-RouterOS-293239?style=flat-square)](#)
+[![Bash](https://img.shields.io/badge/Shell-Bash-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)](#)
 [![LICENSE](https://img.shields.io/badge/LICENSE-MIT-FF6655?style=flat-square)](#)
 
 
