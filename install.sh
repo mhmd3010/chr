@@ -203,7 +203,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable mikrotik-chr.service
+    systemctl enable --now mikrotik-chr.service
 }
 
 do_firewall_rules() {
@@ -332,17 +332,24 @@ draw_box_line "$C_YELLOW" "Full setup & SSTP commands: ${C_CYAN}https://github.c
 draw_box_bottom "$C_YELLOW"
 echo ""
 
-for i in 5 4 3 2 1; do
-    printf "\r${C_BLINK}${C_RED}▶ Launching MikroTik console in %d second(s)... (Press Ctrl+C to cancel)\033[0m" "$i"
-    sleep 1
-done
-printf "\r\033[K"
+read -p " Launch RouterOS console now to configure network? [Y/n]: " LAUNCH_CONSOLE
+LAUNCH_CONSOLE=${LAUNCH_CONSOLE:-Y}
 
-echo -e "${C_GREEN}Opening MikroTik Console...${C_RESET}\n"
-eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-) || true
+if [[ "$LAUNCH_CONSOLE" =~ ^[Yy]$ ]]; then
+    echo -e "\n${C_CYAN}Stopping background service to attach interactive console...${C_RESET}"
+    systemctl stop mikrotik-chr.service >/dev/null 2>&1 || true
 
-echo -e "\n${C_CYAN}Starting MikroTik CHR background service...${C_RESET}"
-systemctl start mikrotik-chr.service >/dev/null 2>&1 || true
+    echo -e "${C_GREEN}Opening MikroTik Console...${C_RESET}\n"
+    eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-) || true
+
+    echo -e "\n${C_CYAN}Starting MikroTik CHR background service...${C_RESET}"
+    systemctl start mikrotik-chr.service >/dev/null 2>&1 || true
+else
+    echo -e "\n${C_YELLOW}Console launch skipped.${C_RESET}"
+    echo -e "You can open it later using:"
+    echo -e "  ${C_CYAN}systemctl stop mikrotik-chr.service${C_RESET}"
+    echo -e "  ${C_CYAN}eval \$(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)${C_RESET}"
+fi
 
 echo ""
 draw_box_top "$C_GREEN" "✔ INSTALLATION COMPLETE & SERVICE RUNNING"

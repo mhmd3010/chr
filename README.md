@@ -32,7 +32,7 @@ Choose:
 
 ## Setup
 
-After running the installer (Option `1`), the script displays a **5-second countdown alert** and automatically launches the RouterOS console.
+After running the installer (Option `1`), the script prompts you to open the RouterOS console immediately to configure the network.
 
 1. Login as `admin` with a blank password.
 2. Paste the initial network commands:
