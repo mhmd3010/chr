@@ -152,18 +152,30 @@ CPU_CORES=$(nproc 2>/dev/null || echo "1")
 MEM_TOTAL=$(free -h 2>/dev/null | awk '/^Mem:/ {print $2}')
 [ -z "$MEM_TOTAL" ] && MEM_TOTAL="N/A"
 
-if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
-    KVM_TAG="${C_GREEN}ENABLED (host)${C_RESET}"
-    export KVM_OPTS="-enable-kvm -cpu host"
+if grep -q -E '(vmx|svm)' /proc/cpuinfo 2>/dev/null; then
+    KVM_BANNER="${C_GREEN}SUPPORTED (VT-x/AMD-V)${C_RESET}"
 else
-    KVM_TAG="${C_YELLOW}EMULATION (kvm64)${C_RESET}"
-    export KVM_OPTS="-cpu kvm64"
+    KVM_BANNER="${C_YELLOW}EMULATION (No VT-x/AMD-V)${C_RESET}"
 fi
+
+check_kvm_support() {
+    modprobe kvm 2>/dev/null || true
+    modprobe kvm_intel 2>/dev/null || modprobe kvm_amd 2>/dev/null || true
+    if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
+        export KVM_OPTS="-enable-kvm -cpu host"
+        echo "KVM acceleration enabled (-enable-kvm -cpu host)"
+    else
+        export KVM_OPTS="-cpu kvm64"
+        echo "KVM device unavailable; using -cpu kvm64"
+    fi
+}
 
 # Step execution functions
 do_install_deps() {
     apt-get update -qq
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils uml-utilities iproute2 iptables iptables-persistent
+    modprobe kvm 2>/dev/null || true
+    modprobe kvm_intel 2>/dev/null || modprobe kvm_amd 2>/dev/null || true
 }
 
 do_prep_image() {
@@ -186,26 +198,6 @@ EOF
     chmod +x /etc/qemu-ifup
 }
 
-do_systemd_service() {
-    local mac=$(printf '52:54:00:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
-    cat << EOF > /etc/systemd/system/mikrotik-chr.service
-[Unit]
-Description=MikroTik CHR
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/qemu-system-x86_64 -nographic -m 512M -smp 2 $KVM_OPTS -machine pc -netdev tap,id=n1,ifname=tap0,script=/etc/qemu-ifup,downscript=no -device virtio-net-pci,netdev=n1,mac=$mac -drive file=/opt/chr/chr.qcow2,if=ide,format=qcow2
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable --now mikrotik-chr.service
-}
-
 do_firewall_rules() {
     iptables -t nat -D POSTROUTING -s 100.64.0.0/24 -j MASQUERADE 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443 2>/dev/null || true
@@ -226,6 +218,27 @@ do_firewall_rules() {
     netfilter-persistent save
 }
 
+do_systemd_service() {
+    check_kvm_support
+    local mac=$(printf '52:54:00:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
+    cat << EOF > /etc/systemd/system/mikrotik-chr.service
+[Unit]
+Description=MikroTik CHR
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qemu-system-x86_64 -nographic -m 512M -smp 2 $KVM_OPTS -machine pc -netdev tap,id=n1,ifname=tap0,script=/etc/qemu-ifup,downscript=no -device virtio-net-pci,netdev=n1,mac=$mac -drive file=/opt/chr/chr.qcow2,if=ide,format=qcow2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable --now mikrotik-chr.service
+}
+
 do_uninst_service() {
     systemctl stop mikrotik-chr.service || true
     systemctl disable mikrotik-chr.service || true
@@ -242,6 +255,8 @@ do_uninst_firewall() {
     iptables -t nat -D PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291 2>/dev/null || true
     iptables -t nat -D PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80 2>/dev/null || true
+    iptables -D FORWARD -i tap0 -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -o tap0 -j ACCEPT 2>/dev/null || true
     ip route del 10.100.0.0/24 via 100.64.0.2 2>/dev/null || true
     netfilter-persistent save || true
 }
@@ -256,13 +271,13 @@ clear 2>/dev/null || true
 draw_box_top "$C_CYAN" "MIKROTIK CHR INSTALLER"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA}  __  __ _ _             _____ _ _      ${C_CYAN}Debian QEMU Edition${C_RESET}"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} |  \/  (_) |           |_   _(_) |     ${C_GRAY}RouterOS Automation${C_RESET}"
-draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} | \  / |_| | ___ __ ___  | |  _| | __  ${C_GRAY}Version 1.6${C_RESET}"
+draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} | \  / |_| | ___ __ ___  | |  _| | __  ${C_GRAY}Version 1.7${C_RESET}"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} | |\/| | | |/ / '__/ _ \ | | | | |/ /  ${C_GRAY}https://github.com/mhmd3010/chr${C_RESET}"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} |_|  |_|_|_|\_\_|  \___/ |_| |_|_|\_\ ${C_RESET}"
 draw_box_sep "$C_CYAN"
 draw_box_line "$C_CYAN" "${C_BOLD}CPU Model:${C_RESET} $CPU_MODEL (${CPU_CORES} cores)"
 draw_box_line "$C_CYAN" "${C_BOLD}Host Memory:${C_RESET} $MEM_TOTAL total    ${C_BOLD}Assigned VM:${C_RESET} 512M RAM / 2 vCPUs"
-draw_box_line "$C_CYAN" "${C_BOLD}Virtualization:${C_RESET} $KVM_TAG"
+draw_box_line "$C_CYAN" "${C_BOLD}Virtualization:${C_RESET} $KVM_BANNER"
 draw_box_bottom "$C_CYAN"
 
 echo ""
@@ -285,7 +300,7 @@ if [ "$OPTION" = "2" ] || [ "$OPTION" = "3" ]; then
 
     run_step 1 "$TOTAL_U_STEPS" "Stopping & disabling systemd service..." do_uninst_service
     run_step 2 "$TOTAL_U_STEPS" "Removing CHR files & virtual TAP interface..." do_uninst_files
-    run_step 3 "$TOTAL_U_STEPS" "Removing iptables port forwarding rules..." do_uninst_firewall
+    run_step 3 "$TOTAL_U_STEPS" "Removing iptables forwarding & NAT rules..." do_uninst_firewall
 
     if [ "$OPTION" = "3" ]; then
         run_step 4 "$TOTAL_U_STEPS" "Purging QEMU packages & auto-cleaning..." do_uninst_purge
@@ -315,8 +330,8 @@ run_step 1 6 "Installing dependencies (qemu, iptables, bridge tools)..." do_inst
 run_step 2 6 "Preparing CHR image in /opt/chr/..." do_prep_image
 run_step 3 6 "Enabling host IPv4 packet forwarding..." do_enable_forwarding
 run_step 4 6 "Configuring TAP virtual network interface..." do_config_tap
-run_step 5 6 "Generating and starting systemd background service..." do_systemd_service
-run_step 6 6 "Configuring NAT and firewall forwarding rules..." do_firewall_rules
+run_step 5 6 "Configuring NAT and firewall forwarding rules..." do_firewall_rules
+run_step 6 6 "Generating and starting systemd background service..." do_systemd_service
 
 # Attention Box & Console Launch
 echo ""
