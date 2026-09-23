@@ -1,9 +1,12 @@
 # MikroTik CHR Installer
 
+[![Free Palestine](https://img.shields.io/badge/FREE-PALESTINE-007A3D?style=flat-square)](#)
+
 [![Platform](https://img.shields.io/badge/platform-Debian-A81D33?style=flat-square)](#)
 [![MikroTik](https://img.shields.io/badge/MikroTik-CHR-293239?style=flat-square)](#)
 [![QEMU](https://img.shields.io/badge/QEMU-supported-FF6600?style=flat-square)](#)
 [![LICENSE](https://img.shields.io/badge/LICENSE-MIT-FF6655?style=flat-square)](#)
+
 
 Run **MikroTik Cloud Hosted Router (CHR)** on a Debian VPS using QEMU.
 

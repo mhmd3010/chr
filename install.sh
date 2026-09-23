@@ -9,7 +9,7 @@ fi
 echo "======================================"
 echo "   MikroTik CHR Installer Menu"
 echo "======================================"
-echo "1. Install (Fresh Base Image)"
+echo "1. Install"
 echo "2. Uninstall"
 echo "3. Cancel"
 echo "======================================"
