@@ -33,18 +33,6 @@ Choose:
 
 The installer automatically pre-configures base IP settings (`100.64.0.2`) on first boot. Once installed, connect directly via **Winbox** (`port 7001`) or **WebFig** (`port 7002`) using user `admin` and a blank password.
 
-### SSTP Configuration
-
-Run inside RouterOS terminal:
-
-```routeros
-/ip pool add name=sstp-pool ranges=10.100.0.10-10.100.0.254
-/ppp profile add name=sstp-profile local-address=10.100.0.1 remote-address=sstp-pool use-encryption=yes dns-server=8.8.8.8,8.8.4.4
-/interface sstp-server server set enabled=yes default-profile=sstp-profile port=443 certificate=none authentication=mschap2
-/ppp secret add name=testuser password=testpass profile=sstp-profile service=sstp
-/ip firewall nat add chain=srcnat dst-address=10.100.0.0/24 action=masquerade
-```
-
 ### Manual Console Fallback
 
 If auto-configuration could not run, access the console manually:
@@ -75,6 +63,18 @@ systemctl start mikrotik-chr.service
 | `4443` | SSTP VPN |
 | `7001` | Winbox |
 | `7002` | WebFig |
+
+## SSTP VPN Configuration (Optional)
+
+Run inside RouterOS terminal:
+
+```routeros
+/ip pool add name=sstp-pool ranges=10.100.0.10-10.100.0.254
+/ppp profile add name=sstp-profile local-address=10.100.0.1 remote-address=sstp-pool use-encryption=yes dns-server=8.8.8.8,8.8.4.4
+/interface sstp-server server set enabled=yes default-profile=sstp-profile port=443 certificate=none authentication=mschap2
+/ppp secret add name=testuser password=testpass profile=sstp-profile service=sstp
+/ip firewall nat add chain=srcnat dst-address=10.100.0.0/24 action=masquerade
+```
 
 ## Support the Developer
 
