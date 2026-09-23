@@ -13,9 +13,11 @@ Select **Option 1** to install, **Option 2** to uninstall.
 
 ## Post-Install Setup
 
-The CHR boots with a blank image — no IP configured yet. You need to access the console once to set it up.
+The installer attempts to automatically pre-configure the base IP (`100.64.0.2`) on first boot. Once the service starts, you can connect immediately via **Winbox** (`port 7001`) or **WebFig** (`port 7002`) with user `admin` and a blank password.
 
-### Step 1: Open the Console
+### Manual Fallback Setup (Only if auto-config is skipped)
+
+If auto-configuration could not run, access the console manually:
 
 ```bash
 systemctl stop mikrotik-chr.service
