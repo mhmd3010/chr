@@ -31,26 +31,11 @@ Choose:
 
 ## Setup
 
-The CHR starts with a blank configuration. Open the console once:
+The installer automatically pre-configures base IP settings (`100.64.0.2`) on first boot. Once installed, connect directly via **Winbox** (`port 7001`) or **WebFig** (`port 7002`) using user `admin` and a blank password.
 
-```bash
-systemctl stop mikrotik-chr.service
-eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)
-```
+### SSTP Configuration
 
-Login as `admin` with a blank password.
-
-### 1. Configure RouterOS
-
-Run first:
-
-```routeros
-/ip address add address=100.64.0.2/24 interface=ether1
-/interface ethernet set ether1 arp=proxy-arp
-/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1
-```
-
-Then configure SSTP:
+Run inside RouterOS terminal:
 
 ```routeros
 /ip pool add name=sstp-pool ranges=10.100.0.10-10.100.0.254
@@ -60,15 +45,28 @@ Then configure SSTP:
 /ip firewall nat add chain=srcnat dst-address=10.100.0.0/24 action=masquerade
 ```
 
-### 2. Restart CHR
+### Manual Console Fallback
 
-Exit the console with `Ctrl + A`, then `X`.
+If auto-configuration could not run, access the console manually:
+
+```bash
+systemctl stop mikrotik-chr.service
+eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)
+```
+
+Configure base network:
+
+```routeros
+/ip address add address=100.64.0.2/24 interface=ether1
+/interface ethernet set ether1 arp=proxy-arp
+/ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1
+```
+
+Exit console with `Ctrl + A` then `X`, and start the background service:
 
 ```bash
 systemctl start mikrotik-chr.service
 ```
-
-CHR is now running in the background.
 
 ## Ports
 
