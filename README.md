@@ -1,6 +1,18 @@
 # MikroTik CHR Installer
 
-Runs a MikroTik Cloud Hosted Router (CHR) inside a Debian VPS using QEMU. Handles everything automatically: QEMU setup, TAP interface, IP forwarding, NAT rules, and a systemd background service.
+[![Platform](https://img.shields.io/badge/platform-Debian-A81D33?style=flat-square)](#)
+[![MikroTik](https://img.shields.io/badge/MikroTik-CHR-293239?style=flat-square)](#)
+[![QEMU](https://img.shields.io/badge/QEMU-supported-FF6600?style=flat-square)](#)
+[![LICENSE](https://img.shields.io/badge/LICENSE-MIT-FF6655?style=flat-square)](#)
+
+Run **MikroTik Cloud Hosted Router (CHR)** on a Debian VPS using QEMU.
+
+Automatically handles:
+
+- QEMU setup
+- TAP interface
+- IP forwarding & NAT
+- systemd service
 
 ## Install
 
@@ -9,33 +21,34 @@ chmod +x install.sh
 ./install.sh
 ```
 
-Select **Option 1** to install, **Option 2** to uninstall.
+Choose:
 
-## Post-Install Setup
+- `1` - Install
+- `2` - Uninstall
 
-The installer attempts to automatically pre-configure the base IP (`100.64.0.2`) on first boot. Once the service starts, you can connect immediately via **Winbox** (`port 7001`) or **WebFig** (`port 7002`) with user `admin` and a blank password.
+## Setup
 
-### Manual Fallback Setup (Only if auto-config is skipped)
-
-If auto-configuration could not run, access the console manually:
+The CHR starts with a blank configuration. Open the console once:
 
 ```bash
 systemctl stop mikrotik-chr.service
 eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)
 ```
 
-Wait for it to boot, then login as `admin` with a blank password.
+Login as `admin` with a blank password.
 
-### Step 2: Configure RouterOS
+### 1. Configure RouterOS
 
-#### MUST RUN (run this first)
+Run first:
+
 ```routeros
 /ip address add address=100.64.0.2/24 interface=ether1
 /interface ethernet set ether1 arp=proxy-arp
 /ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1
 ```
 
-#### SERVER Commands
+Then configure SSTP:
+
 ```routeros
 /ip pool add name=sstp-pool ranges=10.100.0.10-10.100.0.254
 /ppp profile add name=sstp-profile local-address=10.100.0.1 remote-address=sstp-pool use-encryption=yes dns-server=8.8.8.8,8.8.4.4
@@ -44,27 +57,26 @@ Wait for it to boot, then login as `admin` with a blank password.
 /ip firewall nat add chain=srcnat dst-address=10.100.0.0/24 action=masquerade
 ```
 
-<!--
-#### CLIENT Commands
-```routeros
-/interface sstp-client add connect-to=SERVER_IP disabled=no name=sstp-out1 port=4443 profile=default-encryption user=testuser password=testpass verify-server-certificate=no
-```
--->
+### 2. Restart CHR
 
-### Step 3: Exit & Restart
-
-Press `Ctrl + A` then `X` to exit the console, then:
+Exit the console with `Ctrl + A`, then `X`.
 
 ```bash
 systemctl start mikrotik-chr.service
 ```
 
-CHR is now running in the background. Manage it via Winbox on port `7001` or WebFig on port `7002`.
+CHR is now running in the background.
 
-## Port Mapping
+## Ports
 
-| External Port | Service         |
-|---------------|-----------------|
-| 4443          | SSTP VPN        |
-| 7001          | Winbox          |
-| 7002          | WebFig          |
+| Port | Service |
+|---:|---|
+| `4443` | SSTP VPN |
+| `7001` | Winbox |
+| `7002` | WebFig |
+
+## Support the Developer
+
+If you found this project helpful for your business or personal use, consider supporting the development.
+
+[![Support](https://img.shields.io/badge/SUPPORT-BUY%20ME%20A%20COFFEE-ff5f9e?style=for-the-badge&logo=buymeacoffee&logoColor=white&labelColor=4f4f4f)](https://linktr.ee/systik)
