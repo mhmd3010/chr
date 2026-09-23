@@ -26,19 +26,16 @@ chmod +x install.sh
 
 Choose:
 
-- `1` - Install
-- `2` - Uninstall
+- `1` - Install MikroTik CHR
+- `2` - Uninstall (Keep packages)
+- `3` - Uninstall & Purge (Remove QEMU & packages)
 
 ## Setup
 
-The CHR starts with a blank configuration. Open the console once:
+After running the installer (Option `1`), the script displays a **5-second countdown alert** and automatically launches the RouterOS console.
 
-```bash
-systemctl stop mikrotik-chr.service
-eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)
-```
-
-Login as `admin` with a blank password, then run:
+1. Login as `admin` with a blank password.
+2. Paste the initial network commands:
 
 ```routeros
 /ip address add address=100.64.0.2/24 interface=ether1
@@ -46,10 +43,15 @@ Login as `admin` with a blank password, then run:
 /ip route add dst-address=0.0.0.0/0 gateway=100.64.0.1
 ```
 
-Exit the console with `Ctrl + A` then `X`, and start the background service:
+3. Exit the console by pressing `Ctrl + A`, release, then press `X`.
+
+The installer automatically starts the systemd background service upon exit.
+
+### Manual Console Access (If needed later)
 
 ```bash
-systemctl start mikrotik-chr.service
+systemctl stop mikrotik-chr.service
+eval $(grep ExecStart /etc/systemd/system/mikrotik-chr.service | cut -d '=' -f 2-)
 ```
 
 CHR is now running in the background.
