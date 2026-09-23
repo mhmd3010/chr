@@ -21,6 +21,10 @@ fi
 WIDTH=$(tput cols 2>/dev/null || echo 80)
 [ -z "$WIDTH" ] || [ "$WIDTH" -lt 64 ] && WIDTH=80
 
+LOG_FILE="/tmp/chr-installer.log"
+> "$LOG_FILE"
+SHOW_LOGS=0
+
 repeat_char() {
     local char="$1"
     local count="$2"
@@ -72,8 +76,8 @@ draw_box_line() {
 
 draw_progress() {
     local step=$1
-    local total=6
-    local desc=$2
+    local total=$2
+    local desc=$3
     local percent=$(( (step * 100) / total ))
     local bar_len=$(( WIDTH - 40 ))
     [ "$bar_len" -lt 15 ] && bar_len=15
@@ -87,6 +91,60 @@ draw_progress() {
     echo -e "\n${C_CYAN}[${C_GREEN}${bar}${C_GRAY}${blank}${C_CYAN}] ${C_BOLD}${percent}%${C_RESET} ${C_BOLD}[${step}/${total}]${C_RESET} ${desc}"
 }
 
+run_step() {
+    local step=$1
+    local total=$2
+    local desc=$3
+    local func=$4
+
+    draw_progress "$step" "$total" "$desc"
+    echo -e " ${C_GRAY}Press [L] or [Space] anytime to view live logs${C_RESET}"
+    
+    ( "$func" ) >> "$LOG_FILE" 2>&1 &
+    local pid=$!
+    local spin_chars=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local idx=0
+    local last_line=""
+
+    while kill -0 "$pid" 2>/dev/null; do
+        if read -t 0.1 -n 1 -s key; then
+            if [ "$SHOW_LOGS" -eq 0 ]; then
+                SHOW_LOGS=1
+                echo -e "\n${C_CYAN}╭── [ Expanded Logs: Press any key to collapse ] ──╮${C_RESET}"
+            else
+                SHOW_LOGS=0
+                echo -e "${C_CYAN}╰── [ Logs Collapsed ] ──╯${C_RESET}"
+            fi
+        fi
+
+        if [ "$SHOW_LOGS" -eq 1 ]; then
+            local curr_line
+            curr_line=$(tail -n 1 "$LOG_FILE" 2>/dev/null | cut -c1-$(( WIDTH - 6 )))
+            if [ -n "$curr_line" ] && [ "$curr_line" != "$last_line" ]; then
+                echo -e " ${C_GRAY}› $curr_line${C_RESET}"
+                last_line="$curr_line"
+            fi
+        else
+            printf "\r ${C_CYAN}${spin_chars[$idx]}${C_RESET} ${C_GRAY}Processing in background...${C_RESET}"
+            idx=$(( (idx + 1) % 10 ))
+        fi
+        sleep 0.08
+    done
+
+    wait "$pid"
+    local status=$?
+    printf "\r\033[K"
+
+    if [ "$status" -ne 0 ]; then
+        echo -e "\n${C_RED}✖ Step failed! Last 15 log entries:${C_RESET}"
+        tail -n 15 "$LOG_FILE"
+        echo -e "\n${C_RED}Full log available at: $LOG_FILE. Exiting.${C_RESET}\n"
+        exit 1
+    else
+        echo -e " ${C_GREEN}✔ Completed successfully${C_RESET}"
+    fi
+}
+
 # Detect hardware specs
 CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^[ \t]*//' | cut -c1-30)
 [ -z "$CPU_MODEL" ] && CPU_MODEL="Generic x86_64"
@@ -96,18 +154,109 @@ MEM_TOTAL=$(free -h 2>/dev/null | awk '/^Mem:/ {print $2}')
 
 if [ -e /dev/kvm ] && [ -w /dev/kvm ]; then
     KVM_TAG="${C_GREEN}ENABLED (host)${C_RESET}"
-    KVM_OPTS="-enable-kvm -cpu host"
+    export KVM_OPTS="-enable-kvm -cpu host"
 else
     KVM_TAG="${C_YELLOW}EMULATION (kvm64)${C_RESET}"
-    KVM_OPTS="-cpu kvm64"
+    export KVM_OPTS="-cpu kvm64"
 fi
+
+# Step execution functions
+do_install_deps() {
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils uml-utilities iproute2 iptables iptables-persistent
+}
+
+do_prep_image() {
+    mkdir -p /opt/chr
+    cp chr.qcow2 /opt/chr/chr.qcow2
+}
+
+do_enable_forwarding() {
+    sysctl -w net.ipv4.ip_forward=1
+    sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+}
+
+do_config_tap() {
+    cat << 'EOF' > /etc/qemu-ifup
+#!/bin/sh
+ip link set $1 up
+ip addr add 100.64.0.1/24 dev $1
+ip route add 10.100.0.0/24 via 100.64.0.2 || true
+EOF
+    chmod +x /etc/qemu-ifup
+}
+
+do_systemd_service() {
+    local mac=$(printf '52:54:00:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
+    cat << EOF > /etc/systemd/system/mikrotik-chr.service
+[Unit]
+Description=MikroTik CHR
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/qemu-system-x86_64 -nographic -m 512M -smp 2 $KVM_OPTS -machine pc -netdev tap,id=n1,ifname=tap0,script=/etc/qemu-ifup,downscript=no -device virtio-net-pci,netdev=n1,mac=$mac -drive file=/opt/chr/chr.qcow2,if=ide,format=qcow2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable mikrotik-chr.service
+}
+
+do_firewall_rules() {
+    iptables -t nat -D POSTROUTING -s 100.64.0.0/24 -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80 2>/dev/null || true
+
+    iptables -t nat -A POSTROUTING -s 100.64.0.0/24 -j MASQUERADE
+    iptables -t nat -A PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443
+    iptables -t nat -A PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291
+    iptables -t nat -A PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80
+
+    iptables -D FORWARD -i tap0 -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -o tap0 -j ACCEPT 2>/dev/null || true
+    iptables -I FORWARD -i tap0 -j ACCEPT
+    iptables -I FORWARD -o tap0 -j ACCEPT
+
+    ip route add 10.100.0.0/24 via 100.64.0.2 2>/dev/null || true
+    netfilter-persistent save
+}
+
+do_uninst_service() {
+    systemctl stop mikrotik-chr.service || true
+    systemctl disable mikrotik-chr.service || true
+    rm -f /etc/systemd/system/mikrotik-chr.service
+    systemctl daemon-reload
+}
+
+do_uninst_files() {
+    rm -rf /opt/chr /etc/qemu-ifup
+}
+
+do_uninst_firewall() {
+    iptables -t nat -D POSTROUTING -s 100.64.0.0/24 -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291 2>/dev/null || true
+    iptables -t nat -D PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80 2>/dev/null || true
+    ip route del 10.100.0.0/24 via 100.64.0.2 2>/dev/null || true
+    netfilter-persistent save || true
+}
+
+do_uninst_purge() {
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y qemu-system-x86 qemu-utils uml-utilities
+    apt-get autoremove -y -qq
+}
 
 # Banner & System Stats
 clear 2>/dev/null || true
 draw_box_top "$C_CYAN" "MIKROTIK CHR INSTALLER"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA}  __  __ _ _             _____ _ _      ${C_CYAN}Debian QEMU Edition${C_RESET}"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} |  \/  (_) |           |_   _(_) |     ${C_GRAY}RouterOS Automation${C_RESET}"
-draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} | \  / |_| | ___ __ ___  | |  _| | __  ${C_GRAY}Version 1.5${C_RESET}"
+draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} | \  / |_| | ___ __ ___  | |  _| | __  ${C_GRAY}Version 1.6${C_RESET}"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} | |\/| | | |/ / '__/ _ \ | | | | |/ /  ${C_GRAY}https://github.com/mhmd3010/chr${C_RESET}"
 draw_box_line "$C_CYAN" "${C_BOLD}${C_MAGENTA} |_|  |_|_|_|\_\_|  \___/ |_| |_|_|\_\ ${C_RESET}"
 draw_box_sep "$C_CYAN"
@@ -128,29 +277,18 @@ read -p " Select an option [1-4]: " OPTION
 if [ "$OPTION" = "2" ] || [ "$OPTION" = "3" ]; then
     echo ""
     draw_box_top "$C_YELLOW" "UNINSTALLATION"
-    draw_box_line "$C_YELLOW" "Stopping services and cleaning configurations..."
+    draw_box_line "$C_YELLOW" "Removing CHR services, files, and firewall rules..."
     draw_box_bottom "$C_YELLOW"
     
-    systemctl stop mikrotik-chr.service || true
-    systemctl disable mikrotik-chr.service || true
-    rm -f /etc/systemd/system/mikrotik-chr.service
-    systemctl daemon-reload
-    rm -rf /opt/chr
-    rm -f /etc/qemu-ifup
-    
-    # Remove firewall rules
-    iptables -t nat -D POSTROUTING -s 100.64.0.0/24 -j MASQUERADE 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291 2>/dev/null || true
-    iptables -t nat -D PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80 2>/dev/null || true
-    ip route del 10.100.0.0/24 via 100.64.0.2 2>/dev/null || true
-    netfilter-persistent save || true
+    TOTAL_U_STEPS=3
+    [ "$OPTION" = "3" ] && TOTAL_U_STEPS=4
+
+    run_step 1 "$TOTAL_U_STEPS" "Stopping & disabling systemd service..." do_uninst_service
+    run_step 2 "$TOTAL_U_STEPS" "Removing CHR files & virtual TAP interface..." do_uninst_files
+    run_step 3 "$TOTAL_U_STEPS" "Removing iptables port forwarding rules..." do_uninst_firewall
 
     if [ "$OPTION" = "3" ]; then
-        echo -e "\n${C_RED}Purging QEMU and related dependencies...${C_RESET}"
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y qemu-system-x86 qemu-utils uml-utilities
-        apt-get autoremove -y -qq
-        echo -e "${C_GREEN}✔ Dependencies purged successfully.${C_RESET}"
+        run_step 4 "$TOTAL_U_STEPS" "Purging QEMU packages & auto-cleaning..." do_uninst_purge
     fi
 
     echo -e "\n${C_GREEN}✔ Uninstallation complete!${C_RESET}\n"
@@ -163,85 +301,22 @@ elif [ "$OPTION" != "1" ]; then
     exit 1
 fi
 
-echo ""
-draw_box_top "$C_CYAN" "DEPLOYMENT STARTED"
-draw_box_line "$C_CYAN" "Beginning automated installation of MikroTik CHR..."
-draw_box_bottom "$C_CYAN"
-
-# 1. Update and install dependencies
-draw_progress 1 "Installing dependencies (qemu, iptables, bridge tools)..."
-apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qemu-system-x86 qemu-utils uml-utilities iproute2 iptables iptables-persistent
-
-# 2. Setup CHR Directory and Image
-draw_progress 2 "Preparing CHR image in /opt/chr/..."
-mkdir -p /opt/chr
-
-if [ -f "chr.qcow2" ]; then
-    cp chr.qcow2 /opt/chr/chr.qcow2
-else
-    echo -e "\n${C_RED}Error: chr.qcow2 not found! Make sure you run inside installer directory.${C_RESET}"
+if [ ! -f "chr.qcow2" ]; then
+    echo -e "\n${C_RED}Error: chr.qcow2 not found! Run script inside the installer folder.${C_RESET}\n"
     exit 1
 fi
 
-# 3. Enable IP Forwarding
-draw_progress 3 "Enabling host IPv4 packet forwarding..."
-sysctl -w net.ipv4.ip_forward=1 >/dev/null
-sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+echo ""
+draw_box_top "$C_CYAN" "DEPLOYMENT STARTED"
+draw_box_line "$C_CYAN" "Installing MikroTik CHR in the background..."
+draw_box_bottom "$C_CYAN"
 
-# 4. Setup qemu-ifup script
-draw_progress 4 "Configuring TAP virtual network interface..."
-cat << 'EOF' > /etc/qemu-ifup
-#!/bin/sh
-ip link set $1 up
-ip addr add 100.64.0.1/24 dev $1
-ip route add 10.100.0.0/24 via 100.64.0.2 || true
-EOF
-chmod +x /etc/qemu-ifup
-
-# 5. Setup Systemd Service
-draw_progress 5 "Generating systemd background service..."
-
-# Generate a random MAC address
-RANDOM_MAC=$(printf '52:54:00:%02x:%02x:%02x' $((RANDOM%256)) $((RANDOM%256)) $((RANDOM%256)))
-
-cat << EOF > /etc/systemd/system/mikrotik-chr.service
-[Unit]
-Description=MikroTik CHR
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/qemu-system-x86_64 -nographic -m 512M -smp 2 $KVM_OPTS -machine pc -netdev tap,id=n1,ifname=tap0,script=/etc/qemu-ifup,downscript=no -device virtio-net-pci,netdev=n1,mac=$RANDOM_MAC -drive file=/opt/chr/chr.qcow2,if=ide,format=qcow2
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable mikrotik-chr.service >/dev/null 2>&1
-
-# 6. Setup IPTables rules
-draw_progress 6 "Configuring NAT and firewall forwarding rules..."
-iptables -t nat -D POSTROUTING -s 100.64.0.0/24 -j MASQUERADE 2>/dev/null || true
-iptables -t nat -D PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443 2>/dev/null || true
-iptables -t nat -D PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291 2>/dev/null || true
-iptables -t nat -D PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80 2>/dev/null || true
-
-iptables -t nat -A POSTROUTING -s 100.64.0.0/24 -j MASQUERADE
-iptables -t nat -A PREROUTING -p tcp --dport 4443 -j DNAT --to-destination 100.64.0.2:443
-iptables -t nat -A PREROUTING -p tcp --dport 7001 -j DNAT --to-destination 100.64.0.2:8291
-iptables -t nat -A PREROUTING -p tcp --dport 7002 -j DNAT --to-destination 100.64.0.2:80
-
-iptables -D FORWARD -i tap0 -j ACCEPT 2>/dev/null || true
-iptables -D FORWARD -o tap0 -j ACCEPT 2>/dev/null || true
-iptables -I FORWARD -i tap0 -j ACCEPT
-iptables -I FORWARD -o tap0 -j ACCEPT
-
-ip route add 10.100.0.0/24 via 100.64.0.2 2>/dev/null || true
-netfilter-persistent save >/dev/null 2>&1
+run_step 1 6 "Installing dependencies (qemu, iptables, bridge tools)..." do_install_deps
+run_step 2 6 "Preparing CHR image in /opt/chr/..." do_prep_image
+run_step 3 6 "Enabling host IPv4 packet forwarding..." do_enable_forwarding
+run_step 4 6 "Configuring TAP virtual network interface..." do_config_tap
+run_step 5 6 "Generating and starting systemd background service..." do_systemd_service
+run_step 6 6 "Configuring NAT and firewall forwarding rules..." do_firewall_rules
 
 # Attention Box & Console Launch
 echo ""
